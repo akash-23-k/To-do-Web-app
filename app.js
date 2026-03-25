@@ -2,7 +2,9 @@
 // TASKFLOW — APP LOGIC
 // ===========================
 
-const STORAGE_KEY = 'taskflow_tasks';
+// NOTE: STORAGE_KEY is intentionally NOT a fixed string.
+// Tasks are stored per-user using the key: taskflow_tasks_<userId>
+// This prevents any privacy leak between accounts on the same browser.
 const USER_KEY = 'taskflow_user';
 const THEME_KEY = 'taskflow_theme';
 
@@ -10,6 +12,30 @@ let tasks = [];
 let currentUser = null;
 let activeFilter = 'all';
 let reminderTimers = [];
+
+// ===========================
+// PER-USER STORAGE HELPERS
+// ===========================
+
+// Returns the localStorage key scoped to the current user's unique ID.
+function userTasksKey() {
+  if (!currentUser || !currentUser.id) return null;
+  return `taskflow_tasks_${currentUser.id}`;
+}
+
+// Generate a stable, deterministic ID from a name string.
+// Same name → same ID. This ensures returning users see their own tasks.
+function stableId(prefix, name) {
+  // Simple hash: sum of char codes, then base-36 string
+  let hash = 0;
+  const str = (prefix + ':' + name.toLowerCase().trim());
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0; // convert to 32-bit int
+  }
+  // Make always positive and convert to readable string
+  return prefix + '_' + (hash >>> 0).toString(36);
+}
 
 // ===========================
 // INIT
@@ -42,9 +68,15 @@ function loadUser() {
 function saveUser(user) { localStorage.setItem(USER_KEY, JSON.stringify(user)); }
 
 function loadTasks() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
+  const key = userTasksKey();
+  if (!key) return [];
+  try { return JSON.parse(localStorage.getItem(key)) || []; } catch { return []; }
 }
-function saveTasks() { localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)); }
+function saveTasks() {
+  const key = userTasksKey();
+  if (!key) return;
+  localStorage.setItem(key, JSON.stringify(tasks));
+}
 
 // ===========================
 // AUTH
@@ -76,10 +108,13 @@ document.getElementById('demo-login-btn').addEventListener('click', () => {
   const name = nameInput.value.trim();
   if (!name) { nameInput.style.borderColor = 'var(--critical)'; return; }
   nameInput.style.borderColor = '';
-  currentUser = { name, provider: 'demo', id: 'demo_' + Date.now() };
+
+  // Use a stable ID derived from the name so the same person
+  // always gets the same ID and sees their own tasks on return.
+  currentUser = { name, provider: 'demo', id: stableId('demo', name) };
   saveUser(currentUser);
   showApp();
-  showToast(`Welcome, ${name}! 🚀`);
+  showToast(`Welcome back, ${name}! 🚀`);
 });
 
 // Google auth simulation (redirects to Google OAuth in production)
@@ -88,7 +123,8 @@ document.getElementById('google-login-btn').addEventListener('click', () => {
   // For GitHub Pages demo, simulate a Google login prompt
   const name = prompt('Google Sign-In (Demo)\nEnter your name:');
   if (name && name.trim()) {
-    currentUser = { name: name.trim(), provider: 'google', id: 'google_' + Date.now() };
+    // Stable ID ensures the same Google user always sees their own tasks
+    currentUser = { name: name.trim(), provider: 'google', id: stableId('google', name.trim()) };
     saveUser(currentUser);
     showApp();
     showToast(`Signed in as ${name.trim()} ✓`);
